@@ -1,21 +1,6 @@
 package models
 
-import (
-	"github.com/gorilla/sessions"
-	"golang.org/x/oauth2"
-)
-
-const (
-	SessionName     = "oauth-session"
-	SessionStateKey = "oauth_state"
-	SessionUserKey  = "user"
-)
-
-var (
-	OauthConfig *oauth2.Config
-	Store       *sessions.CookieStore
-	BaseURL     string // e.g. http://localhost:8080
-)
+//todo write structs of any data use during app
 
 type GitHubUser struct {
 	Login     string `json:"login"`

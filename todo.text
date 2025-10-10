@@ -1,0 +1,15 @@
+-implement the oauth flow completely.
+  -implement login and logout.
+- check usage of jwt if possible for learning purposes.
+-implement a github repo tree api.
+-fetch a github repo tree.
+-fetch content of its each file and reconstruct it in your local do not do it using clone etc.
+-you need to iterate over each file and pass content to the llm to check if its following certain rules.
+-can integrate truffle hog to check for security scans.
+-can perform code quality checks.
+-can perform difference analysis as we did in Hacken.
+-I can add vulnerability scanner as well that Zaryab implemented.
+-I can add llm integration using Open Api Paid.
+-I can add vulnerability scan alert system which can keep an eye on sources to alert code maintainers about newly introduced vulnerabilities.
+-I can implement Solana Smart contract Security checks to it.
+-I can add ethereum smart contracts security checks

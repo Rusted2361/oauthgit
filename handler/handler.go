@@ -1,116 +1,232 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"oauthgit/helper"
 	"oauthgit/models"
 
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-gonic/gin"
+
 	"golang.org/x/oauth2"
 )
 
-func HandleHome(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "<html><body>"+
-		"<h1>GitHub OAuth Demo</h1>"+
-		`<a href="/login">Login with GitHub</a>`+
-		"</body></html>")
+const (
+	SessionStateKey = "oauth_state"
+)
+
+func HandleHome(c *gin.Context) {
+	//todo
+	html := `<!doctype html>
+		<html>
+		<head><title>Login</title></head>
+		<body>
+		  <h1>Login</h1>
+		  <p>Welcome! Click the button to continue.</p>
+		  <form method="get" action="/login">
+			<button type="submit">Login</button>
+		  </form>
+		</body>
+		</html>`
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
 }
 
-func HandleLogin(w http.ResponseWriter, r *http.Request) {
-	// create state and store in session
-	state, err := helper.GenerateState()
+// HandleLogin starts the OAuth flow:
+// 1) Generate a CSRF-resistant state token
+// 2) Store the state in the user's session cookie
+// 3) Redirect the user to the provider's authorization URL
+func HandleLogin(c *gin.Context) {
+	//todo
+	// Generate a random, CSRF-resistant state string (base64 encoded)
+	state, err := helper.GenerateToken()
 	if err != nil {
-		http.Error(w, "failed to generate state", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "failed to generate state")
 		return
 	}
-	sess, _ := models.Store.Get(r, models.SessionName)
-	sess.Values[models.SessionStateKey] = state
-	if err := sess.Save(r, w); err != nil {
-		http.Error(w, "failed to save session", http.StatusInternalServerError)
+	//fmt.Println(state)
+
+	// Open or create a session for the user
+	session := sessions.Default(c)
+
+	// Store the generated state inside the session
+	session.Set(SessionStateKey, state)
+
+	// Save the session to persist the cookie
+	err = session.Save()
+	if err != nil {
+		c.String(http.StatusInternalServerError, "failed to save session")
 		return
 	}
-	url := models.OauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
-	http.Redirect(w, r, url, http.StatusFound)
+	// Build the GitHub authorization URL using OAuth config and the state
+	gitAuthURL := helper.OauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	fmt.Println("gitAuthURL", gitAuthURL)
+	// Redirect the user to that GitHub authorization URL
+	c.Redirect(http.StatusFound, gitAuthURL)
+
 }
 
-func HandleCallback(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	sess, _ := models.Store.Get(r, models.SessionName)
+func HandleCallback(c *gin.Context) {
+	//todo
+	// Retrieve the session for this request
+	session := sessions.Default(c)
 
-	// verify state
-	stored, ok := sess.Values[models.SessionStateKey].(string)
-	if !ok || stored == "" {
-		http.Error(w, "state missing in session", http.StatusBadRequest)
+	// Read the stored state from the session
+	state := session.Get(SessionStateKey)
+	fmt.Println("state", state)
+
+	// Compare stored state with 'state' query parameter to prevent CSRF
+	queryState := c.Request.URL.Query().Get("state")
+	fmt.Println(queryState)
+
+	if queryState != state {
+		c.String(http.StatusBadRequest, "Invalid state parameter using wrong CSRF token")
 		return
 	}
-	queryState := r.URL.Query().Get("state")
-	if queryState == "" || queryState != stored {
-		http.Error(w, "invalid state parameter", http.StatusBadRequest)
-		return
-	}
-	// exchanged code for token
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		http.Error(w, "code not found", http.StatusBadRequest)
-		return
-	}
-	token, err := models.OauthConfig.Exchange(ctx, code)
+
+	// Get 'code' query parameter from URL
+	queryCode := c.Request.URL.Query().Get("code")
+	fmt.Println(queryCode)
+
+	// Exchange the code for an access token using OAuth config
+	token, err := helper.OauthConfig.Exchange(c, queryCode)
 	if err != nil {
-		http.Error(w, "failed to exchange token: "+err.Error(), http.StatusInternalServerError)
+		http.Error(c.Writer, "Failed to exchange code for token", http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("token", token)
 
-	// create OAuth2 client and fetch user
-	client := models.OauthConfig.Client(ctx, token)
-	user, err := helper.FetchGitHubUser(client)
+	//todo: check if access token in valid or expired
+	accessToken := token.AccessToken
+	fmt.Println("accessToken", accessToken)
+
+	// Create an OAuth client using the returned token
+	client := helper.OauthConfig.Client(c, token)
+	fmt.Println("client", client)
+
+	// Call GitHub API to fetch the authenticated user's info
+	response, err := client.Get("https://api.github.com/user")
 	if err != nil {
-		http.Error(w, "failed to fetch user: "+err.Error(), http.StatusInternalServerError)
+		http.Error(c.Writer, "Failed to fetch user data", http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("response", response)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		http.Error(c.Writer, "Failed to read user data", http.StatusInternalServerError)
 		return
 	}
 
-	// try fetch email if missing
-	if user.Email == "" {
-		if email, eerr := helper.FetchPrimaryEmail(client); eerr == nil {
-			user.Email = email
-		}
-	}
-
-	// Save user into session (simple example)
-	sess.Values[models.SessionUserKey] = user
-	delete(sess.Values, models.SessionStateKey) // remove state
-	if err := sess.Save(r, w); err != nil {
-		http.Error(w, "failed to save session", http.StatusInternalServerError)
+	fmt.Println("body", string(body))
+	var user models.GitHubUser
+	err = json.Unmarshal(body, &user)
+	if err != nil {
+		http.Error(c.Writer, "Failed to parse user data", http.StatusInternalServerError)
 		return
 	}
+	fmt.Println("user", user)
 
-	http.Redirect(w, r, "/welcome", http.StatusFound)
+	// TODO 8: If user email is missing, call the /user/emails API to get the primary email
+	//response1, _ := client.Get("https://api.github.com/user/emails")
+	//defer response1.Body.Close()
+	//body, _ = io.ReadAll(response1.Body)
+	////fmt.Println("body", string(body))
+	//
+	//var emails []models.GitHubEmail
+	//err = json.Unmarshal(body, &emails)
+	//if err != nil {
+	//	http.Error(c.Writer, "Failed to parse email data", http.StatusInternalServerError)
+	//	return
+	//}
+	//fmt.Println("emails", emails)
+
+	// Store the user info inside the session
+	fmt.Println("=== SESSION DEBUG START ===")
+	fmt.Printf("User object to store: %+v\n", user)
+	session.Set("user", user)
+	fmt.Println("✅ session.Set() completed")
+	// Check if it was stored
+	storedUser := session.Get("user")
+	fmt.Printf("Immediately after Set - stored user: %+v\n", storedUser)
+
+	// Remove the old state from session
+	fmt.Printf("State before delete: %+v\n", session.Get(SessionStateKey))
+	session.Delete(SessionStateKey)
+	fmt.Printf("State after delete: %+v\n", session.Get(SessionStateKey))
+
+	// Save the updated session
+	fmt.Println("About to call session.Save()...")
+	err = session.Save()
+	if err != nil {
+		fmt.Printf("❌ SESSION SAVE ERROR: %v\n", err)
+		fmt.Printf("Error type: %T\n", err)
+		http.Error(c.Writer, "Failed to save session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("✅ session.Save() completed successfully!")
+
+	// Test if data persists after save
+	savedUser := session.Get("user")
+	fmt.Printf("User after save: %+v\n", savedUser)
+	fmt.Println("=== SESSION DEBUG END ===")
+
+	// Redirect to /welcome
+	c.Redirect(http.StatusFound, "/welcome")
 }
 
-func HandleWelcome(w http.ResponseWriter, r *http.Request) {
-	sess, _ := models.Store.Get(r, models.SessionName)
-	u, ok := sess.Values[models.SessionUserKey].(models.GitHubUser)
+func HandleWelcome(c *gin.Context) {
+	// Retrieve the session for this request
+	session := sessions.Default(c)
+	// Read the user object from session
+	user, ok := session.Get("user").(models.GitHubUser)
+	// If no user is found, redirect to /login
 	if !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(c.Writer, c.Request, "/login", http.StatusFound)
 		return
 	}
-	fmt.Fprintf(w, "<html><body>")
-	fmt.Fprintf(w, "<h1>Welcome, %s</h1>", u.Login)
-	if u.Name != "" {
-		fmt.Fprintf(w, "<p>Name: %s</p>", u.Name)
+	fmt.Printf("Type of user: %T\n", user)
+	// Render a simple HTML response displaying:
+	//         - GitHub username
+	//         - Full name (if available)
+	//         - Email (if available)
+	//         - Avatar image (if available)
+
+	fmt.Fprintf(c.Writer, "<html><body>")
+	fmt.Fprintf(c.Writer, "<h1>Welcome, %s</h1>", user.Login)
+	if user.Name != "" {
+		fmt.Fprintf(c.Writer, "<p>Name: %s</p>", user.Name)
 	}
-	if u.Email != "" {
-		fmt.Fprintf(w, "<p>Email: %s</p>", u.Email)
+	if user.Email != "" {
+		fmt.Fprintf(c.Writer, "<p>Email: %s</p>", user.Email)
 	}
-	if u.AvatarURL != "" {
-		fmt.Fprintf(w, `<img src="%s" width="100"/>`, u.AvatarURL)
+	if user.AvatarURL != "" {
+		fmt.Fprintf(c.Writer, `<img src="%s" width="100"/>`, user.AvatarURL)
 	}
-	fmt.Fprintf(w, `<form action="/logout" method="post"><button type="submit">Logout</button></form>`)
-	fmt.Fprintf(w, "</body></html>")
+	fmt.Fprintf(c.Writer, `<form action="/logout" method="post"><button type="submit">Logout</button></form>`)
+	fmt.Fprintf(c.Writer, "</body></html>")
+
+	// Add a logout button that POSTs to /logout
+	fmt.Printf("Handling Welcome")
 }
 
-func HandleLogout(w http.ResponseWriter, r *http.Request) {
-	sess, _ := models.Store.Get(r, models.SessionName)
-	delete(sess.Values, models.SessionUserKey)
-	_ = sess.Save(r, w)
-	http.Redirect(w, r, "/", http.StatusFound)
+func HandleLogout(c *gin.Context) {
+
+	// Retrieve the session for this request
+	session := sessions.Default(c)
+	// Delete the user entry from session
+	session.Delete("user")
+	// Optionally clear other session values like state
+	session.Clear()
+	// Save the session (to update the cookie)
+	err := session.Save()
+	if err != nil {
+		http.Error(c.Writer, "Failed to save session", http.StatusInternalServerError)
+	}
+	// Redirect to home ("/")
+	c.Redirect(http.StatusFound, "/")
+	fmt.Printf("Handling Logout")
 }

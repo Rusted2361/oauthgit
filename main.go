@@ -1,96 +1,96 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"oauthgit/handler"
-	"oauthgit/models"
+	"oauthgit/helper"
+	"oauthgit/session"
 	"os"
-	"os/signal"
-	"time"
 
-	"github.com/gorilla/mux"
-	"github.com/gorilla/sessions"
-	"github.com/joho/godotenv"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/github"
+	"github.com/gin-gonic/gin"
+
+	// TODO: Uncomment these imports after creating the respective packages:
+	// "oauthgit/auth"
+	// "oauthgit/config"
+	// "oauthgit/middleware"
 )
 
+//todo write all handles for server home, login, callback, welcome, logout
+
+func RegisterRoutes(router *gin.Engine) {
+	// Public routes (no authentication required)
+	router.GET("/", handler.HandleHome)
+	router.GET("/login", handler.HandleLogin)
+	router.GET("/callback", handler.HandleCallback)
+	router.POST("/logout", handler.HandleLogout)
+
+	// TODO: Step 4.1 - Create protected route group with JWT middleware
+	// Uncomment the code below after completing Phase 3:
+	//
+	// protected := router.Group("/")
+	// protected.Use(middleware.JWTAuthMiddleware(helper.JWTService))
+	// {
+	//     protected.GET("/welcome", handler.HandleWelcome)
+	//     // TODO: Add more protected routes here as needed
+	// }
+
+	// TODO: Remove this line after moving /welcome to protected group above
+	router.GET("/welcome", handler.HandleWelcome)
+
+	http.Handle("/", router)
+}
+
 func main() {
-
-	//use slogger as a logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	//use slog : done
+	// Initialize slog logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 	slog.SetDefault(logger)
-	err := godotenv.Load()
+
+	// TODO: Step 3.3 - Load JWT configuration from environment
+	// Uncomment after creating config package:
+	//
+	// cfg, err := config.Load()
+	// if err != nil {
+	//     slog.Error("Failed to load configuration", "error", err)
+	//     os.Exit(1)
+	// }
+	// slog.Info("Configuration loaded successfully",
+	//     "jwt_expiry", cfg.JWTExpiry,
+	//     "server_port", cfg.ServerPort)
+
+	//load env to config : done
+	sessionKey, githubclient, githubsecret, BaseUrl := helper.LoadEnv()
+
+	//initialize OauthConfig
+	helper.InitOauth(githubclient, githubsecret, BaseUrl)
+
+	// TODO: Step 3.4 - Initialize JWT service
+	// Uncomment after completing Step 3.3:
+	//
+	// helper.JWTService = auth.NewJWTService(cfg.JWTSecret, cfg.JWTExpiry)
+	// slog.Info("JWT service initialized successfully")
+
+	//create Routers
+	router := gin.Default()
+
+	//initialize sessions middleware
+	session.InitSession(router, sessionKey)
+
+	//register routes
+	RegisterRoutes(router)
+
+	//todo start server
+	//run server
+	// TODO: Step 3.5 - Use configurable port from config
+	// Change to: err := router.Run(":" + cfg.ServerPort)
+	err := router.Run()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		slog.Error("Failed to start server", "error", err)
+		return
 	}
 
-	// Load env vars
-	clientID := os.Getenv("GITHUB_CLIENT_ID")
-	fmt.Println(clientID)
-	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
-	sessionKey := os.Getenv("SESSION_KEY")
-	baseURL := os.Getenv("BASE_URL")
-
-	if clientID == "" || clientSecret == "" || sessionKey == "" || baseURL == "" {
-		log.Fatal("GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, SESSION_KEY and BASE_URL must be set")
-	}
-
-	models.OauthConfig = &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint:     github.Endpoint,
-		Scopes:       []string{"user:email"},
-		RedirectURL:  baseURL + "/callback",
-	}
-
-	models.Store = sessions.NewCookieStore([]byte(sessionKey))
-	models.Store.Options = &sessions.Options{
-		HttpOnly: true,
-		Secure:   false, // set true in prod (requires HTTPS)
-		Path:     "/",
-		MaxAge:   86400 * 7,
-	}
-
-	r := mux.NewRouter()
-	r.HandleFunc("/", handler.HandleHome).Methods("GET")
-	r.HandleFunc("/login", handler.HandleLogin).Methods("GET")
-	r.HandleFunc("/callback", handler.HandleCallback).Methods("GET")
-	r.HandleFunc("/welcome", handler.HandleWelcome).Methods("GET")
-	r.HandleFunc("/logout", handler.HandleLogout).Methods("POST")
-
-	// Static or templates can be added here
-
-	srv := &http.Server{
-		Handler:      r,
-		Addr:         ":8080",
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	// Graceful shutdown
-	go func() {
-		log.Printf("Server starting on %s\n", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("ListenAndServe(): %v", err)
-		}
-	}()
-
-	// Wait for interrupt
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt)
-	<-stop
-	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("Server Shutdown Failed:%+v", err)
-	}
-	log.Println("Server exited gracefully")
+	//todo stop server with graceful shutdown
 }
