@@ -8,21 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type PullRequest struct {
-	ID           int64              `json:"id"`
-	GithubID     int64              `json:"github_id"`
-	RepositoryID int64              `json:"repository_id"`
-	PrNumber     int32              `json:"pr_number"`
-	Title        *string            `json:"title"`
-	Author       *string            `json:"author"`
-	Status       *string            `json:"status"`
-	BaseBranch   *string            `json:"base_branch"`
-	HeadBranch   *string            `json:"head_branch"`
-	ReviewedAt   pgtype.Timestamptz `json:"reviewed_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-}
-
 type Repository struct {
 	ID        int64              `json:"id"`
 	GithubID  int64              `json:"github_id"`
@@ -33,19 +18,6 @@ type Repository struct {
 	IsActive  *bool              `json:"is_active"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-}
-
-type ReviewComment struct {
-	ID              int64              `json:"id"`
-	PrID            int64              `json:"pr_id"`
-	GithubCommentID *int64             `json:"github_comment_id"`
-	FilePath        *string            `json:"file_path"`
-	LineNumber      *int32             `json:"line_number"`
-	Comment         string             `json:"comment"`
-	Severity        *string            `json:"severity"`
-	Posted          *bool              `json:"posted"`
-	PostedAt        pgtype.Timestamptz `json:"posted_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {
