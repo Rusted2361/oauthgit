@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
+	"log"
 	"log/slog"
 	"net/http"
+	"oauthgit/db/sqlc"
 	"oauthgit/handler"
+
 	"oauthgit/helper"
 	"oauthgit/session"
 	"os"
 
 	"github.com/gin-gonic/gin"
-
+	"github.com/jackc/pgx/v5"
 	// TODO: Uncomment these imports after creating the respective packages:
 	// "oauthgit/auth"
 	// "oauthgit/config"
@@ -49,29 +53,26 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	// TODO: Step 3.3 - Load JWT configuration from environment
-	// Uncomment after creating config package:
-	//
-	// cfg, err := config.Load()
-	// if err != nil {
-	//     slog.Error("Failed to load configuration", "error", err)
-	//     os.Exit(1)
-	// }
-	// slog.Info("Configuration loaded successfully",
-	//     "jwt_expiry", cfg.JWTExpiry,
-	//     "server_port", cfg.ServerPort)
-
 	//load env to config : done
-	sessionKey, githubclient, githubsecret, BaseUrl := helper.LoadEnv()
+	sessionKey, githubclient, githubsecret, BaseUrl, databaseURL := helper.LoadEnv()
+
+	conn, err := pgx.Connect(context.Background(), databaseURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer conn.Close(context.Background())
+
+	log.Println("✅ Successfully connected to database")
+
+	// Create SQLC queries instance
+	queries := sqlc.New(conn)
+
+	// Set queries in helper package BEFORE setting up routes
+	helper.SetQueries(queries)
+	log.Println("✅ Database queries initialized")
 
 	//initialize OauthConfig
 	helper.InitOauth(githubclient, githubsecret, BaseUrl)
-
-	// TODO: Step 3.4 - Initialize JWT service
-	// Uncomment after completing Step 3.3:
-	//
-	// helper.JWTService = auth.NewJWTService(cfg.JWTSecret, cfg.JWTExpiry)
-	// slog.Info("JWT service initialized successfully")
 
 	//create Routers
 	router := gin.Default()
@@ -86,7 +87,7 @@ func main() {
 	//run server
 	// TODO: Step 3.5 - Use configurable port from config
 	// Change to: err := router.Run(":" + cfg.ServerPort)
-	err := router.Run()
+	err = router.Run()
 	if err != nil {
 		slog.Error("Failed to start server", "error", err)
 		return

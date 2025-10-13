@@ -129,26 +129,22 @@ func HandleCallback(c *gin.Context) {
 		return
 	}
 	fmt.Println("user", user)
+	// === NEW: Store user in database ===
+	dbUser, err := helper.StoreUserInDatabase(c, &user, accessToken)
+	if err != nil {
+		fmt.Printf("❌ Failed to store user in database: %v\n", err)
+		http.Error(c.Writer, "Failed to store user data", http.StatusInternalServerError)
+		return
+	}
+	fmt.Printf("✅ User stored/updated in database: ID=%d, Username=%s\n", dbUser.ID, dbUser.Username)
 
-	// TODO 8: If user email is missing, call the /user/emails API to get the primary email
-	//response1, _ := client.Get("https://api.github.com/user/emails")
-	//defer response1.Body.Close()
-	//body, _ = io.ReadAll(response1.Body)
-	////fmt.Println("body", string(body))
-	//
-	//var emails []models.GitHubEmail
-	//err = json.Unmarshal(body, &emails)
-	//if err != nil {
-	//	http.Error(c.Writer, "Failed to parse email data", http.StatusInternalServerError)
-	//	return
-	//}
-	//fmt.Println("emails", emails)
-
-	// Store the user info inside the session
+	// Store the user info inside the session (now includes database ID)
 	fmt.Println("=== SESSION DEBUG START ===")
 	fmt.Printf("User object to store: %+v\n", user)
 	session.Set("user", user)
+	session.Set("user_id", dbUser.ID) // Store database ID in session
 	fmt.Println("✅ session.Set() completed")
+
 	// Check if it was stored
 	storedUser := session.Get("user")
 	fmt.Printf("Immediately after Set - stored user: %+v\n", storedUser)
