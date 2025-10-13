@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS users (
      created_at TIMESTAMPTZ DEFAULT NOW(),
      updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Create index on username for faster lookups
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_github_id ON users(github_id);
+
 -- Create repositories table (now with user_id foreign key)
 CREATE TABLE IF NOT EXISTS repositories (
     id BIGSERIAL PRIMARY KEY,
@@ -21,6 +25,10 @@ CREATE TABLE IF NOT EXISTS repositories (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Create index on full_name for faster lookups
+CREATE INDEX idx_repositories_full_name ON repositories(full_name);
+CREATE INDEX idx_repositories_is_active ON repositories(is_active);
+CREATE INDEX idx_repositories_user_id ON repositories(user_id);
 
 -- Create pull_requests table
 CREATE TABLE IF NOT EXISTS pull_requests (
@@ -38,6 +46,10 @@ CREATE TABLE IF NOT EXISTS pull_requests (
      updated_at TIMESTAMPTZ DEFAULT NOW(),
      CONSTRAINT unique_repo_pr_number UNIQUE(repository_id, pr_number)
 );
+-- Create indexes for pull_requests
+CREATE INDEX idx_pull_requests_repository_id ON pull_requests(repository_id);
+CREATE INDEX idx_pull_requests_status ON pull_requests(status);
+CREATE INDEX idx_pull_requests_github_id ON pull_requests(github_id);
 
 -- Create review_comments table
 CREATE TABLE IF NOT EXISTS review_comments (
@@ -52,3 +64,7 @@ CREATE TABLE IF NOT EXISTS review_comments (
    posted_at TIMESTAMPTZ,
    created_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Create indexes for review_comments
+CREATE INDEX idx_review_comments_pr_id ON review_comments(pr_id);
+CREATE INDEX idx_review_comments_severity ON review_comments(severity);
+CREATE INDEX idx_review_comments_posted ON review_comments(posted);
