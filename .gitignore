@@ -1,1 +1,60 @@
-/.env
+# -------------------------------
+# 🐹 Go Build Artifacts
+# -------------------------------
+bin/
+build/
+dist/
+*.exe
+*.test
+*.out
+
+# Go modules cache
+vendor/
+
+# -------------------------------
+# 🗄️ Environment & Secrets
+# -------------------------------
+.env
+.env.local
+.env.*
+!env.example
+
+# -------------------------------
+# 🧠 IDE / Editor Configs
+# -------------------------------
+# GoLand / IntelliJ
+.idea/
+*.iml
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# -------------------------------
+# 🧰 Database / Migrations / SQLC
+# -------------------------------
+db/migrations/*.tmp
+db/sqlc/*.tmp
+*.db-journal
+*.sqlite3
+
+# -------------------------------
+# 🐳 Docker
+# -------------------------------
+docker-compose.override.yml
+*.log
+*.pid
+
+# -------------------------------
+# 🧹 OS / Misc
+# -------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# -------------------------------
+# 🧾 Testing
+# -------------------------------
+coverage.out
+testdata/
