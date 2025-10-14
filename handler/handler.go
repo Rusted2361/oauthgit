@@ -97,15 +97,13 @@ func HandleCallback(c *gin.Context) {
 		http.Error(c.Writer, "Failed to exchange code for token", http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("token", token)
 
-	//todo: check if access token in valid or expired
 	accessToken := token.AccessToken
-	fmt.Println("accessToken", accessToken)
+	//fmt.Println("accessToken", accessToken)
 
 	// Create an OAuth client using the returned token
 	client := helper.OauthConfig.Client(c, token)
-	fmt.Println("client", client)
+	//fmt.Println("client", client)
 
 	// Call GitHub API to fetch the authenticated user's info
 	response, err := client.Get("https://api.github.com/user")
@@ -113,7 +111,7 @@ func HandleCallback(c *gin.Context) {
 		http.Error(c.Writer, "Failed to fetch user data", http.StatusInternalServerError)
 		return
 	}
-	fmt.Println("response", response)
+	//fmt.Println("response", response)
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -139,15 +137,16 @@ func HandleCallback(c *gin.Context) {
 	fmt.Printf("✅ User stored/updated in database: ID=%d, Username=%s\n", dbUser.ID, dbUser.Username)
 
 	// Store the user info inside the session (now includes database ID)
-	fmt.Println("=== SESSION DEBUG START ===")
+	//fmt.Println("=== SESSION DEBUG START ===")
 	fmt.Printf("User object to store: %+v\n", user)
 	session.Set("user", user)
-	session.Set("user_id", dbUser.ID) // Store database ID in session
+	session.Set("accesstoken", accessToken)
+	//session.Set("user_id", dbUser.ID) // Store database ID in session
 	fmt.Println("✅ session.Set() completed")
 
 	// Check if it was stored
-	storedUser := session.Get("user")
-	fmt.Printf("Immediately after Set - stored user: %+v\n", storedUser)
+	//storedUser := session.Get("user")
+	//fmt.Printf("Immediately after Set - stored user: %+v\n", storedUser)
 
 	// Remove the old state from session
 	fmt.Printf("State before delete: %+v\n", session.Get(SessionStateKey))
@@ -165,11 +164,6 @@ func HandleCallback(c *gin.Context) {
 	}
 	fmt.Println("✅ session.Save() completed successfully!")
 
-	// Test if data persists after save
-	savedUser := session.Get("user")
-	fmt.Printf("User after save: %+v\n", savedUser)
-	fmt.Println("=== SESSION DEBUG END ===")
-
 	// Redirect to /welcome
 	c.Redirect(http.StatusFound, "/welcome")
 }
@@ -184,12 +178,6 @@ func HandleWelcome(c *gin.Context) {
 		http.Redirect(c.Writer, c.Request, "/login", http.StatusFound)
 		return
 	}
-	fmt.Printf("Type of user: %T\n", user)
-	// Render a simple HTML response displaying:
-	//         - GitHub username
-	//         - Full name (if available)
-	//         - Email (if available)
-	//         - Avatar image (if available)
 
 	fmt.Fprintf(c.Writer, "<html><body>")
 	fmt.Fprintf(c.Writer, "<h1>Welcome, %s</h1>", user.Login)
@@ -202,9 +190,18 @@ func HandleWelcome(c *gin.Context) {
 	if user.AvatarURL != "" {
 		fmt.Fprintf(c.Writer, `<img src="%s" width="100"/>`, user.AvatarURL)
 	}
-	fmt.Fprintf(c.Writer, `<form action="/logout" method="post"><button type="submit">Logout</button></form>`)
-	fmt.Fprintf(c.Writer, "</body></html>")
 
+	fmt.Fprintf(c.Writer, `<form action="/logout" method="post"><button type="submit">Logout</button></form>`)
+
+	fmt.Fprintf(c.Writer, `
+		<h1>Review Repository</h1>
+		<form action="/ReviewRepo" method="POST">
+			<label>Repository URL:</label>
+			<input type="text" name="repo_url" placeholder="ssh git@github.com/username/repo" required>
+			<button type="submit">Submit</button>
+		</form>
+	`)
+	fmt.Fprintf(c.Writer, "</body></html>")
 	// Add a logout button that POSTs to /logout
 	fmt.Printf("Handling Welcome")
 }
@@ -225,4 +222,32 @@ func HandleLogout(c *gin.Context) {
 	// Redirect to home ("/")
 	c.Redirect(http.StatusFound, "/")
 	fmt.Printf("Handling Logout")
+}
+
+func HandleReviewRepo(c *gin.Context) {
+	//this api will clone the repo and it will create a worker pool to get content of each file and send to llm to check if errors are handeld properly or not
+
+	repoURL := ""
+	if c.Request.Method == "POST" {
+		repoURL = c.PostForm("repo_url")
+		fmt.Printf("Repository URL: %s\n", repoURL)
+
+		c.String(http.StatusOK, "Repository URL received: %s", repoURL)
+		return
+	}
+	sess := sessions.Default(c)
+	accessToken, ok := sess.Get("accesstoken").(string)
+	if !ok {
+		c.String(http.StatusUnauthorized, "Access token not found")
+		return
+	}
+
+	//todo: clone the repo
+	err := helper.CloneRepo(repoURL, "/", accessToken)
+	if err != nil {
+		fmt.Printf("Error cloning repo: %v\n", err)
+	}
+
+	c.Header("Content-Type", "text/html")
+
 }

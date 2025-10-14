@@ -28,6 +28,7 @@ func RegisterRoutes(router *gin.Engine) {
 	router.GET("/login", handler.HandleLogin)
 	router.GET("/callback", handler.HandleCallback)
 	router.POST("/logout", handler.HandleLogout)
+	router.POST("/ReviewRepo", handler.HandleReviewRepo)
 
 	// TODO: Step 4.1 - Create protected route group with JWT middleware
 	// Uncomment the code below after completing Phase 3:
