@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"oauthgit/db/sqlc"
 	"oauthgit/models"
+	"os/exec"
 	"strings"
 
 	"log"
@@ -188,30 +189,36 @@ func DecryptToken(ciphertextB64 string) (string, error) {
 	return string(plaintext), nil
 }
 
-func CloneRepo(repoURL string, destinationPath, accessToken string) error {
-	// Validate the repo URL
+// CloneRepo clones a Git repository using the system's git command.
+func CloneRepo(repoURL, destinationPath, accessToken string) error {
+	// Validate inputs
 	if repoURL == "" {
 		return fmt.Errorf("repository URL cannot be empty")
 	}
-
 	if accessToken == "" {
 		return fmt.Errorf("access token cannot be empty")
 	}
 
-	// Convert SSH URL to HTTPS if needed
+	if destinationPath == "" {
+		return fmt.Errorf("destination path cannot be empty")
+	}
+
+	// Convert SSH to HTTPS if needed
 	authenticatedURL := buildAuthenticatedURL(repoURL, accessToken)
 
-	// Clone the repository using go-git
-	_, err := git.PlainClone(destinationPath, false, &git.CloneOptions{
-		URL: authenticatedURL,
-		Auth: &http.BasicAuth{
-			Username: "oauth2", // Can be anything for token auth
-			Password: accessToken,
-		},
-		Progress: os.Stdout, // Show clone progress
-	})
+	// Prepare git clone command
+	cmd := exec.Command("git", "clone", authenticatedURL, destinationPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
-	if err != nil {
+	fmt.Printf("Cloning repository from %s...\n", repoURL)
+
+	//todo check if repository is already cloned remove it
+	os.RemoveAll(destinationPath)
+
+	// Run the command
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Error: %v\n", err)
 		return fmt.Errorf("failed to clone repository: %w", err)
 	}
 
@@ -219,26 +226,21 @@ func CloneRepo(repoURL string, destinationPath, accessToken string) error {
 	return nil
 }
 
-// buildAuthenticatedURL converts repo URL and injects the access token
+// buildAuthenticatedURL converts a repo URL into an HTTPS URL with the token.
 func buildAuthenticatedURL(repoURL, accessToken string) string {
-	// If it's an SSH URL (git@github.com:user/repo.git), convert to HTTPS
-	if strings.HasPrefix(repoURL, "git@github.com:") {
-		// Convert git@github.com:user/repo.git to https://token@github.com/user/repo.git
-		repoURL = strings.Replace(repoURL, "git@github.com:", "github.com/", 1)
-		return fmt.Sprintf("https://%s@%s", accessToken, repoURL)
-	}
-
-	// If it's already HTTPS (https://github.com/user/repo.git)
-	if strings.HasPrefix(repoURL, "https://github.com/") {
-		// Inject token: https://token@github.com/user/repo.git
+	// Example:
+	// Input:  https://github.com/user/repo.git
+	// Output: https://<token>@github.com/user/repo.git
+	if strings.HasPrefix(repoURL, "https://") {
 		return strings.Replace(repoURL, "https://", fmt.Sprintf("https://%s@", accessToken), 1)
 	}
 
-	// If it's a simple github.com/user/repo format
-	if strings.HasPrefix(repoURL, "github.com/") {
+	// Handle SSH-style URLs (git@github.com:user/repo.git)
+	if strings.HasPrefix(repoURL, "git@") {
+		repoURL = strings.TrimPrefix(repoURL, "git@")
+		repoURL = strings.Replace(repoURL, ":", "/", 1)
 		return fmt.Sprintf("https://%s@%s", accessToken, repoURL)
 	}
 
-	// Return as-is if format is unknown
 	return repoURL
 }

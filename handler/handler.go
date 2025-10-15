@@ -1,12 +1,18 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"oauthgit/helper"
 	"oauthgit/models"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -197,6 +203,7 @@ func HandleWelcome(c *gin.Context) {
 		<h1>Review Repository</h1>
 		<form action="/ReviewRepo" method="POST">
 			<label>Repository URL:</label>
+			<p>Please use Http for better speed</p>
 			<input type="text" name="repo_url" placeholder="ssh git@github.com/username/repo" required>
 			<button type="submit">Submit</button>
 		</form>
@@ -226,15 +233,13 @@ func HandleLogout(c *gin.Context) {
 
 func HandleReviewRepo(c *gin.Context) {
 	//this api will clone the repo and it will create a worker pool to get content of each file and send to llm to check if errors are handeld properly or not
-
+	fmt.Printf("229")
 	repoURL := ""
 	if c.Request.Method == "POST" {
 		repoURL = c.PostForm("repo_url")
 		fmt.Printf("Repository URL: %s\n", repoURL)
-
-		c.String(http.StatusOK, "Repository URL received: %s", repoURL)
-		return
 	}
+	fmt.Printf("238\n")
 	sess := sessions.Default(c)
 	accessToken, ok := sess.Get("accesstoken").(string)
 	if !ok {
@@ -242,12 +247,94 @@ func HandleReviewRepo(c *gin.Context) {
 		return
 	}
 
+	fmt.Printf("245\n")
 	//todo: clone the repo
-	err := helper.CloneRepo(repoURL, "/", accessToken)
+	repoName := strings.TrimSuffix(path.Base(repoURL), ".git")
+	err := helper.CloneRepo(repoURL, repoName, accessToken)
 	if err != nil {
 		fmt.Printf("Error cloning repo: %v\n", err)
+		http.Error(c.Writer, fmt.Sprintf("Failed to clone repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+	queryparam := fmt.Sprintf("/analysis?repo=" + repoURL)
+
+	c.Redirect(http.StatusFound, queryparam)
+
+}
+
+func HandleAnalysisPage(c *gin.Context) {
+	repo := c.Query("repo")
+	if repo == "" {
+		http.Error(c.Writer, "missing repo parameter", http.StatusBadRequest)
+		return
 	}
 
-	c.Header("Content-Type", "text/html")
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<head><title>Analysis Options</title></head>
+<body>
+  <h1>Repository: %s</h1>
+  <p>Choose what you want to do next:</p>
 
+  <form method="post" action="/static-analysis" style="margin-bottom: 1rem;">
+    <input type="hidden" name="repo" value="%s">
+    <input type="hidden" name="action" value="static">
+    <button type="submit">Run Static Analysis</button>
+  </form>
+</body>
+</html>`, repo, repo)
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(html))
+}
+
+func HandleStaticAnalysis(c *gin.Context) {
+	repo := c.PostForm("repo")
+	if repo == "" {
+		http.Error(c.Writer, "missing repo", http.StatusBadRequest)
+		return
+	}
+	fmt.Printf("repo: %s\n", repo)
+
+	repoName := strings.TrimSuffix(path.Base(repo), ".git")
+	dir := filepath.Join(".", repoName)
+	// Get absolute path
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "failed to get absolute path: %v", err)
+		return
+	}
+
+	fmt.Printf("Absolute dir: %s\n", absDir)
+
+	// Check if directory exists
+	if _, err := os.Stat(absDir); err != nil {
+		c.String(http.StatusBadRequest, "repo directory not found: %s", absDir)
+		return
+	}
+
+	// Prepare command: cd into repo dir and run govulncheck
+	cmd := exec.Command("govulncheck", "./...")
+	cmd.Dir = absDir
+	fmt.Printf("cmd: %s\n", cmd)
+	fmt.Printf("cmd.Dir: %s\n", cmd.Dir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	exitErr, _ := err.(*exec.ExitError)
+
+	if err != nil {
+		if exitErr != nil && exitErr.ExitCode() == 3 {
+			// Vulnerabilities found
+			c.Data(http.StatusOK, "text/plain; charset=utf-8", stdout.Bytes())
+			return
+		}
+
+		// error
+		c.String(http.StatusInternalServerError, "govulncheck failed:\n%s\n%s", err.Error(), stderr.String())
+		return
+	}
+
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", stdout.Bytes())
 }
