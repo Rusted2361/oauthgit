@@ -554,7 +554,7 @@ func UserFollowers(c *gin.Context) {
 	}
 
 	// Parse list payload
-	var items []interface{}
+	var items []models.Followers
 	if err := json.Unmarshal(body, &items); err != nil {
 		http.Error(c.Writer, "Failed to parse followers list", http.StatusInternalServerError)
 		return
