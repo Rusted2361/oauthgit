@@ -518,3 +518,79 @@ func UserData(c *gin.Context) {
 
 	c.JSON(http.StatusOK, data)
 }
+
+func UserFollowers(c *gin.Context) {
+	//this api will return the user data from the database
+	// sess := sessions.Default(c)
+
+	// token, ok := sess.Get("accesstoken").(string)
+	authHeader := c.GetHeader("Authorization")
+	accessToken := ""
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		accessToken = strings.TrimSpace(authHeader[len("Bearer "):])
+	}
+
+	perPageStr := c.DefaultQuery("per_page", "2")
+	pageStr := c.DefaultQuery("page", "1")
+
+	// Create an OAuth client using the returned token
+	client := helper.OauthConfig.Client(c, &oauth2.Token{AccessToken: accessToken})
+
+	// Build GitHub API URL
+	baseURL := "https://api.github.com/user/following"
+
+	apiURL := fmt.Sprintf("%s?per_page=%s&page=%s", baseURL, perPageStr, pageStr)
+
+	response, err := client.Get(apiURL)
+	if err != nil {
+		http.Error(c.Writer, "Failed to fetch followers", http.StatusInternalServerError)
+		return
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		http.Error(c.Writer, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse list payload
+	var items []interface{}
+	if err := json.Unmarshal(body, &items); err != nil {
+		http.Error(c.Writer, "Failed to parse followers list", http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"items":      items,
+		"pagination": parseLinkHeader(response.Header.Get("Link")),
+		"per_page":   perPageStr,
+		"page":       pageStr,
+	})
+}
+
+// parseLinkHeader extracts pagination links from GitHub's Link header
+func parseLinkHeader(linkHeader string) map[string]string {
+	fmt.Println("linkHeader", linkHeader)
+	result := map[string]string{}
+	if linkHeader == "" {
+		return result
+	}
+	parts := strings.Split(linkHeader, ",")
+	fmt.Println("parts", parts)
+	for _, p := range parts {
+		seg := strings.Split(strings.TrimSpace(p), ";")
+		if len(seg) < 2 {
+			continue
+		}
+		urlPart := strings.TrimSpace(seg[0])
+		relPart := strings.TrimSpace(seg[1])
+		if strings.HasPrefix(urlPart, "<") && strings.HasSuffix(urlPart, ">") {
+			urlPart = urlPart[1 : len(urlPart)-1]
+		}
+		if strings.HasPrefix(relPart, "rel=") {
+			rel := strings.Trim(relPart[len("rel="):], "\"")
+			result[rel] = urlPart
+		}
+	}
+	return result
+}

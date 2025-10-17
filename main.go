@@ -33,6 +33,7 @@ func RegisterRoutes(router *gin.Engine) {
 	router.POST("/webhook/github", handler.HandleGithubWebhook)
 	router.GET("/analysis", handler.HandleAnalysisPage)
 	router.GET("/user", handler.UserData)
+	router.GET("/user/followers", handler.UserFollowers)
 	// router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
 	router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
 	router.POST("/prreview", handler.HandlePRReview)
