@@ -58,3 +58,5 @@ Thumbs.db
 # -------------------------------
 coverage.out
 testdata/
+
+test/

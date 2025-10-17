@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"oauthgit/db/sqlc"
 	"oauthgit/helper"
 	"oauthgit/models"
 	"os"
@@ -105,7 +106,7 @@ func HandleCallback(c *gin.Context) {
 	}
 
 	accessToken := token.AccessToken
-	//fmt.Println("accessToken", accessToken)
+	fmt.Println("accessToken", accessToken)
 
 	// Create an OAuth client using the returned token
 	client := helper.OauthConfig.Client(c, token)
@@ -231,35 +232,52 @@ func HandleLogout(c *gin.Context) {
 	fmt.Printf("Handling Logout")
 }
 
-func HandleReviewRepo(c *gin.Context) {
+func HandleCloneRepo(c *gin.Context) {
 	//this api will clone the repo and it will create a worker pool to get content of each file and send to llm to check if errors are handeld properly or not
 	fmt.Printf("229")
 	repoURL := ""
-	if c.Request.Method == "POST" {
-		repoURL = c.PostForm("repo_url")
-		fmt.Printf("Repository URL: %s\n", repoURL)
+	repoURL = c.PostForm("repo_url")
+	fmt.Printf("Repository URL: %s\n", repoURL)
+
+	if repoURL == "" {
+		repoURL = c.Request.URL.Query().Get("repo_url")
+		if repoURL == "" {
+			c.String(http.StatusBadRequest, "missing repo_url parameter")
+			return
+		}
 	}
+
 	fmt.Printf("238\n")
 	sess := sessions.Default(c)
 	accessToken, ok := sess.Get("accesstoken").(string)
-	if !ok {
-		c.String(http.StatusUnauthorized, "Access token not found")
-		return
+	if !ok || accessToken == "" {
+		// Fallback: allow Bearer token via Authorization header for API clients (e.g., Postman)
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			accessToken = strings.TrimSpace(authHeader[len("Bearer "):])
+		}
+		// Optional: allow access_token form field as a secondary fallback
+		if accessToken == "" {
+			accessToken = c.PostForm("access_token")
+		}
+		if accessToken == "" {
+			c.String(http.StatusUnauthorized, "Access token not found")
+			return
+		}
 	}
+
+	//todo
 
 	fmt.Printf("245\n")
 	//todo: clone the repo
-	repoName := strings.TrimSuffix(path.Base(repoURL), ".git")
+	repoName := "test/" + strings.TrimSuffix(path.Base(repoURL), ".git")
 	err := helper.CloneRepo(repoURL, repoName, accessToken)
 	if err != nil {
 		fmt.Printf("Error cloning repo: %v\n", err)
 		http.Error(c.Writer, fmt.Sprintf("Failed to clone repository: %v", err), http.StatusInternalServerError)
 		return
 	}
-	queryparam := fmt.Sprintf("/analysis?repo=" + repoURL)
-
-	c.Redirect(http.StatusFound, queryparam)
-
+	c.String(http.StatusOK, "Repository cloned successfully")
 }
 
 func HandleAnalysisPage(c *gin.Context) {
@@ -288,15 +306,20 @@ func HandleAnalysisPage(c *gin.Context) {
 }
 
 func HandleStaticAnalysis(c *gin.Context) {
-	repo := c.PostForm("repo")
+	repo := c.PostForm("repo_url")
 	if repo == "" {
-		http.Error(c.Writer, "missing repo", http.StatusBadRequest)
-		return
+		repo = c.Request.URL.Query().Get("repo_url")
+		if repo == "" {
+			c.String(http.StatusBadRequest, "missing repo_url parameter")
+			return
+		}
 	}
+
 	fmt.Printf("repo: %s\n", repo)
 
 	repoName := strings.TrimSuffix(path.Base(repo), ".git")
-	dir := filepath.Join(".", repoName)
+
+	dir := filepath.Join(".", "test", repoName)
 	// Get absolute path
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -337,4 +360,161 @@ func HandleStaticAnalysis(c *gin.Context) {
 	}
 
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", stdout.Bytes())
+}
+
+func HandlePRReview(c *gin.Context) {
+
+}
+
+// HandleRegisterRepo registers a repository for the logged-in user and sets up a GitHub webhook
+func HandleRegisterRepo(c *gin.Context) {
+	// Accept either JSON {"repo": "owner/name" | URL} or form field repo/repo_url
+	var payload struct {
+		Repo string `json:"repo"`
+	}
+	_ = c.BindJSON(&payload)
+	repoInput := payload.Repo
+	if repoInput == "" {
+		repoInput = c.PostForm("repo")
+	}
+	if repoInput == "" {
+		repoInput = c.PostForm("repo_url")
+	}
+	if repoInput == "" {
+		repoInput = c.Query("repo")
+	}
+	if repoInput == "" {
+		c.String(http.StatusBadRequest, "missing repo input")
+		return
+	}
+
+	// Session: get GitHub user and access token
+	sess := sessions.Default(c)
+	ghUser, ok := sess.Get("user").(models.GitHubUser)
+	if !ok || ghUser.ID == 0 {
+		c.String(http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	accessToken, _ := sess.Get("accesstoken").(string)
+	if accessToken == "" {
+		// allow Authorization: Bearer
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+			accessToken = strings.TrimSpace(authHeader[len("Bearer "):])
+		}
+		if accessToken == "" {
+			c.String(http.StatusUnauthorized, "access token not found")
+			return
+		}
+	}
+
+	// Parse repo input
+	owner, repo := helper.ParseRepoInput(repoInput)
+	if owner == "" || repo == "" {
+		c.String(http.StatusBadRequest, "invalid repo input; expected owner/repo or GitHub URL")
+		return
+	}
+
+	// Fetch repo metadata from GitHub
+	githubID, fullName, ownerOut, nameOut, err := helper.GetRepoMetadata(owner, repo, accessToken)
+	if err != nil {
+		c.String(http.StatusBadGateway, "failed to fetch repo metadata: %v", err)
+		return
+	}
+
+	// Fetch our DB user to get user_id
+	dbUser, err := helper.Queries.GetUserByGithubID(c, ghUser.ID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "failed to find user: %v", err)
+		return
+	}
+
+	// Store repository in DB (upsert-like: try find by full_name first)
+	var repoRow sqlc.Repository
+	existing, err := helper.Queries.GetRepositoryByFullName(c, fullName)
+	if err == nil && existing.ID != 0 {
+		repoRow = existing
+	} else {
+		active := true
+		repoRow, err = helper.Queries.CreateRepository(c, sqlc.CreateRepositoryParams{
+			GithubID: githubID,
+			UserID:   dbUser.ID,
+			FullName: fullName,
+			Owner:    ownerOut,
+			Name:     nameOut,
+			IsActive: &active,
+		})
+		if err != nil {
+			c.String(http.StatusInternalServerError, "failed to store repository: %v", err)
+			return
+		}
+	}
+
+	// Create webhook on the repo
+	webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+	if webhookSecret == "" {
+		webhookSecret = os.Getenv("SESSION_KEY")
+	}
+	if err := helper.CreateRepoWebhook(ownerOut, nameOut, accessToken, webhookSecret); err != nil {
+		c.String(http.StatusBadGateway, "failed to create webhook: %v", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "repository registered and webhook created",
+		"repository": repoRow,
+	})
+}
+
+// HandleGithubWebhook processes incoming GitHub webhooks (stub)
+func HandleGithubWebhook(c *gin.Context) {
+	c.String(http.StatusOK, "ok")
+}
+
+func UserData(c *gin.Context) {
+	//this api will return the user data from the database
+	// sess := sessions.Default(c)
+
+	// token, ok := sess.Get("accesstoken").(string)
+	authHeader := c.GetHeader("Authorization")
+	accessToken := ""
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		accessToken = strings.TrimSpace(authHeader[len("Bearer "):])
+	}
+
+	// Create an OAuth client using the returned token
+	client := helper.OauthConfig.Client(c, &oauth2.Token{AccessToken: accessToken})
+
+	// Call GitHub API to fetch the authenticated user's info
+	response, err := client.Get("https://api.github.com/user")
+	if err != nil {
+		http.Error(c.Writer, "Failed to fetch user data", http.StatusInternalServerError)
+		return
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		http.Error(c.Writer, "Failed to read user data", http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("body", string(body))
+
+	//lets parse body to interface string map
+	var data map[string]interface{}
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		http.Error(c.Writer, "Failed to parse user data", http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("data", data)
+
+	var user models.GitHubUser
+	err = json.Unmarshal(body, &user)
+	if err != nil {
+		http.Error(c.Writer, "Failed to parse user data", http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("user", user)
+
+	c.JSON(http.StatusOK, data)
 }

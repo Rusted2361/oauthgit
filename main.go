@@ -28,9 +28,14 @@ func RegisterRoutes(router *gin.Engine) {
 	router.GET("/login", handler.HandleLogin)
 	router.GET("/callback", handler.HandleCallback)
 	router.POST("/logout", handler.HandleLogout)
-	router.POST("/ReviewRepo", handler.HandleReviewRepo)
+	router.POST("/CloneRepo", handler.HandleCloneRepo)
+	router.POST("/repos/register", handler.HandleRegisterRepo)
+	router.POST("/webhook/github", handler.HandleGithubWebhook)
 	router.GET("/analysis", handler.HandleAnalysisPage)
-	router.POST("/static-analysis", handler.HandleStaticAnalysis)
+	router.GET("/user", handler.UserData)
+	// router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
+	router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
+	router.POST("/prreview", handler.HandlePRReview)
 
 	// TODO: Step 4.1 - Create protected route group with JWT middleware
 	// Uncomment the code below after completing Phase 3:

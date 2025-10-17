@@ -5,7 +5,10 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"oauthgit/db/sqlc"
 	"oauthgit/models"
 	"os/exec"
@@ -25,6 +28,8 @@ var (
 	Queries     *sqlc.Queries
 	// EncryptionKey holds the symmetric key for encrypting tokens (32 bytes).
 	EncryptionKey []byte
+	// BaseURL is the externally reachable base URL of this service.
+	BaseURL string
 )
 
 // SetQueries sets the database queries instance
@@ -49,6 +54,7 @@ func GenerateToken() (string, error) {
 
 func InitOauth(githubclient, githubsecret, BaseUrl string) {
 	//initialize github OauthConfig
+	BaseURL = BaseUrl
 	OauthConfig = &oauth2.Config{
 		ClientID:     githubclient,
 		ClientSecret: githubsecret,
@@ -59,6 +65,121 @@ func InitOauth(githubclient, githubsecret, BaseUrl string) {
 			TokenURL: "https://github.com/login/oauth/access_token",
 		},
 	}
+}
+
+// CreateRepoWebhook registers a webhook on the provided repository using the caller's token.
+// It subscribes to PR-related events and points to BaseURL + "/webhook/github".
+func CreateRepoWebhook(owner, repo, accessToken, webhookSecret string) error {
+	if owner == "" || repo == "" {
+		return fmt.Errorf("owner and repo are required")
+	}
+	if accessToken == "" {
+		return fmt.Errorf("access token is required")
+	}
+	if BaseURL == "" {
+		return fmt.Errorf("base URL is not configured")
+	}
+
+	hookURL := BaseURL + "/webhook/github"
+	payload := map[string]any{
+		"name":   "web",
+		"active": true,
+		"events": []string{"pull_request", "pull_request_review_comment", "check_suite", "check_run"},
+		"config": map[string]any{
+			"url":          hookURL,
+			"content_type": "json",
+			"secret":       webhookSecret,
+			"insecure_ssl": "0",
+		},
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks", owner, repo), strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "token "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create webhook: %s - %s", resp.Status, string(respBody))
+	}
+	return nil
+}
+
+// GetRepoMetadata fetches repository metadata from GitHub and returns github_id, full name, owner, and name.
+func GetRepoMetadata(owner, repo, accessToken string) (githubID int64, fullName, ownerOut, nameOut string, err error) {
+	if owner == "" || repo == "" {
+		return 0, "", "", "", fmt.Errorf("owner and repo are required")
+	}
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo), nil)
+	if err != nil {
+		return 0, "", "", "", err
+	}
+	if accessToken != "" {
+		req.Header.Set("Authorization", "token "+accessToken)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, "", "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return 0, "", "", "", fmt.Errorf("failed to fetch repo: %s - %s", resp.Status, string(b))
+	}
+	var data struct {
+		ID       int64  `json:"id"`
+		FullName string `json:"full_name"`
+		Name     string `json:"name"`
+		Owner    struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+	}
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&data); err != nil {
+		return 0, "", "", "", err
+	}
+	return data.ID, data.FullName, data.Owner.Login, data.Name, nil
+}
+
+// ParseRepoInput accepts inputs like "owner/repo" or an HTTPS/SSH URL and returns owner, repo.
+func ParseRepoInput(input string) (string, string) {
+	s := strings.TrimSpace(input)
+	if s == "" {
+		return "", ""
+	}
+	if strings.Contains(s, "github.com") {
+		s = strings.TrimSuffix(s, ".git")
+		s = strings.TrimPrefix(s, "https://")
+		s = strings.TrimPrefix(s, "http://")
+		s = strings.TrimPrefix(s, "git@")
+		s = strings.TrimPrefix(s, "github.com:")
+		s = strings.TrimPrefix(s, "github.com/")
+		parts := strings.Split(s, "/")
+		if len(parts) >= 2 {
+			return parts[0], parts[1]
+		}
+		return "", ""
+	}
+	if strings.Count(s, "/") == 1 {
+		parts := strings.SplitN(s, "/", 2)
+		return parts[0], parts[1]
+	}
+	return "", ""
 }
 
 //function to load environment variables
