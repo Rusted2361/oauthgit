@@ -9,7 +9,7 @@ import (
 	"oauthgit/handler"
 
 	"oauthgit/helper"
-	"oauthgit/session"
+	"oauthgit/middlewares"
 	"os"
 
 	"github.com/gin-gonic/gin"
@@ -32,7 +32,7 @@ func RegisterRoutes(router *gin.Engine) {
 	router.POST("/repos/register", handler.HandleRegisterRepo)
 	router.POST("/webhook/github", handler.HandleGithubWebhook)
 	router.GET("/analysis", handler.HandleAnalysisPage)
-	router.GET("/user", handler.UserData)
+	router.GET("/user", middlewares.JWTAuthMiddleware(), handler.UserData)
 	router.GET("/user/followers", handler.UserFollowers)
 	// router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
 	router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
@@ -87,7 +87,7 @@ func main() {
 	router := gin.Default()
 
 	//initialize sessions middleware
-	session.InitSession(router, sessionKey)
+	middlewares.InitSession(router, sessionKey)
 
 	//register routes
 	RegisterRoutes(router)

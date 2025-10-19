@@ -143,36 +143,48 @@ func HandleCallback(c *gin.Context) {
 	}
 	fmt.Printf("✅ User stored/updated in database: ID=%d, Username=%s\n", dbUser.ID, dbUser.Username)
 
-	// Store the user info inside the session (now includes database ID)
-	//fmt.Println("=== SESSION DEBUG START ===")
-	fmt.Printf("User object to store: %+v\n", user)
-	session.Set("user", user)
-	session.Set("accesstoken", accessToken)
-	//session.Set("user_id", dbUser.ID) // Store database ID in session
-	fmt.Println("✅ session.Set() completed")
+	// Generate JWT with user info
+	jwtToken, err := helper.GenerateJWT(dbUser.ID, user.Login)
+	if err != nil {
+		http.Error(c.Writer, "Failed to generate JWT", http.StatusInternalServerError)
+		return
+	}
 
-	// Check if it was stored
-	//storedUser := session.Get("user")
-	//fmt.Printf("Immediately after Set - stored user: %+v\n", storedUser)
+	// // Store the user info inside the session (now includes database ID)
+	// //fmt.Println("=== SESSION DEBUG START ===")
+	// fmt.Printf("User object to store: %+v\n", user)
+	// session.Set("user", user)
+	// session.Set("accesstoken", accessToken)
+	// //session.Set("user_id", dbUser.ID) // Store database ID in session
+	// fmt.Println("✅ session.Set() completed")
+
+	// // Check if it was stored
+	// //storedUser := session.Get("user")
+	// //fmt.Printf("Immediately after Set - stored user: %+v\n", storedUser)
 
 	// Remove the old state from session
 	fmt.Printf("State before delete: %+v\n", session.Get(SessionStateKey))
 	session.Delete(SessionStateKey)
 	fmt.Printf("State after delete: %+v\n", session.Get(SessionStateKey))
 
-	// Save the updated session
-	fmt.Println("About to call session.Save()...")
-	err = session.Save()
-	if err != nil {
-		fmt.Printf("❌ SESSION SAVE ERROR: %v\n", err)
-		fmt.Printf("Error type: %T\n", err)
-		http.Error(c.Writer, "Failed to save session: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	fmt.Println("✅ session.Save() completed successfully!")
+	// // Save the updated session
+	// fmt.Println("About to call session.Save()...")
+	// err = session.Save()
+	// if err != nil {
+	// 	fmt.Printf("❌ SESSION SAVE ERROR: %v\n", err)
+	// 	fmt.Printf("Error type: %T\n", err)
+	// 	http.Error(c.Writer, "Failed to save session: "+err.Error(), http.StatusInternalServerError)
+	// 	return
+	// }
+	// fmt.Println("✅ session.Save() completed successfully!")
 
-	// Redirect to /welcome
-	c.Redirect(http.StatusFound, "/welcome")
+	// // Redirect to /welcome
+	// c.Redirect(http.StatusFound, "/welcome")
+	// Return JWT instead of storing in session
+	c.JSON(http.StatusOK, gin.H{
+		"jwt":  jwtToken,
+		"user": user,
+	})
 }
 
 func HandleWelcome(c *gin.Context) {
@@ -474,16 +486,27 @@ func HandleGithubWebhook(c *gin.Context) {
 func UserData(c *gin.Context) {
 	//this api will return the user data from the database
 	// sess := sessions.Default(c)
-
-	// token, ok := sess.Get("accesstoken").(string)
-	authHeader := c.GetHeader("Authorization")
-	accessToken := ""
-	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-		accessToken = strings.TrimSpace(authHeader[len("Bearer "):])
+	fmt.Println("489")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	fmt.Println("userId", userID)
+	// Lookup user's GitHub token from database
+	dbUser, err := helper.Queries.GetUserByID(c, userID.(int64))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
+		return
+	}
+	fmt.Println("*dbUser.AccessToken", *dbUser.AccessToken)
+	dec, err := helper.DecryptToken(*dbUser.AccessToken)
+	if err != nil {
+		fmt.Println("not decrypted")
 	}
 
 	// Create an OAuth client using the returned token
-	client := helper.OauthConfig.Client(c, &oauth2.Token{AccessToken: accessToken})
+	client := helper.OauthConfig.Client(c, &oauth2.Token{AccessToken: dec})
 
 	// Call GitHub API to fetch the authenticated user's info
 	response, err := client.Get("https://api.github.com/user")

@@ -1,5 +1,7 @@
 package models
 
+import "github.com/golang-jwt/jwt/v4"
+
 //todo write structs of any data use during app
 
 type GitHubUser struct {
@@ -15,4 +17,10 @@ type Followers struct {
 	ID        int64  `json:"id"`
 	AvatarURL string `json:"avatar_url"`
 	UserType  string `json:"type"`
+}
+
+type Claims struct {
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	jwt.StandardClaims
 }

@@ -1,4 +1,4 @@
-package session
+package middlewares
 
 import (
 	"encoding/gob"

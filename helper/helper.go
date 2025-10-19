@@ -13,12 +13,14 @@ import (
 	"oauthgit/models"
 	"os/exec"
 	"strings"
+	"time"
 
 	"log"
 
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
@@ -364,4 +366,38 @@ func buildAuthenticatedURL(repoURL, accessToken string) string {
 	}
 
 	return repoURL
+}
+
+// In helper/helper.go
+func GenerateJWT(userID int64, username string) (string, error) {
+	claims := &models.Claims{
+		UserID:   userID,
+		Username: username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(24 * time.Hour).Unix(),
+			IssuedAt:  time.Now().Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	sec := os.Getenv("JWT_SECRET")
+	fmt.Println("sec", sec)
+	return token.SignedString([]byte(sec))
+}
+
+func VerifyJWT(tokenString string) (int64, error) {
+	claims := &models.Claims{}
+	sec := os.Getenv("JWT_SECRET")
+	fmt.Println("sec", sec)
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(sec), nil
+	})
+	fmt.Println("tpken", token)
+	fmt.Println("claims", claims.UserID)
+
+	if err != nil || !token.Valid {
+		return 0, err
+	}
+
+	return claims.UserID, nil
 }
