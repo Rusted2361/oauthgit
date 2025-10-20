@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"log/slog"
-	"net/http"
 	"oauthgit/db/sqlc"
 	"oauthgit/handler"
 
@@ -27,42 +26,32 @@ func RegisterRoutes(router *gin.Engine) {
 	router.GET("/", handler.HandleHome)
 	router.GET("/login", handler.HandleLogin)
 	router.GET("/callback", handler.HandleCallback)
-	router.POST("/logout", handler.HandleLogout)
-	router.POST("/CloneRepo", handler.HandleCloneRepo)
-	router.POST("/repos/register", handler.HandleRegisterRepo)
-	router.POST("/webhook/github", handler.HandleGithubWebhook)
-	router.GET("/analysis", handler.HandleAnalysisPage)
-	router.GET("/user", middlewares.JWTAuthMiddleware(), handler.UserData)
-	router.GET("/user/followers", handler.UserFollowers)
-	// router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
-	router.POST("/staticAnalysis", handler.HandleStaticAnalysis)
-	router.POST("/prreview", handler.HandlePRReview)
 
-	// TODO: Step 4.1 - Create protected route group with JWT middleware
-	// Uncomment the code below after completing Phase 3:
-	//
-	// protected := router.Group("/")
-	// protected.Use(middleware.JWTAuthMiddleware(helper.JWTService))
-	// {
-	//     protected.GET("/welcome", handler.HandleWelcome)
-	//     // TODO: Add more protected routes here as needed
-	// }
+	protected := router.Group("/")
+	protected.Use(middlewares.JWTAuthMiddleware())
+	{
+		protected.GET("/welcome", handler.HandleWelcome)
+		protected.GET("/user", handler.UserData)
+		protected.POST("/CloneRepo", handler.HandleCloneRepo)
+		protected.POST("/staticAnalysis", handler.HandleStaticAnalysis)
+		protected.GET("/user/followers", handler.UserFollowers)
+		protected.GET("/analysis", handler.HandleAnalysisPage)
+		protected.POST("/logout", handler.HandleLogout)
 
-	// TODO: Remove this line after moving /welcome to protected group above
-	router.GET("/welcome", handler.HandleWelcome)
+	}
 
-	http.Handle("/", router)
+	// http.Handle("/", router)
 }
 
 func main() {
-	//use slog : done
-	// Initialize slog logger
+
+	// Logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
 
-	//load env to config : done
+	// Env
 	sessionKey, githubclient, githubsecret, BaseUrl, databaseURL := helper.LoadEnv()
 
 	conn, err := pgx.Connect(context.Background(), databaseURL)
@@ -80,13 +69,13 @@ func main() {
 	helper.SetQueries(queries)
 	log.Println("✅ Database queries initialized")
 
-	//initialize OauthConfig
+	// OAuth
 	helper.InitOauth(githubclient, githubsecret, BaseUrl)
 
 	//create Routers
 	router := gin.Default()
 
-	//initialize sessions middleware
+	// Sessions Cookie
 	middlewares.InitSession(router, sessionKey)
 
 	//register routes
