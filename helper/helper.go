@@ -401,3 +401,32 @@ func VerifyJWT(tokenString string) (int64, error) {
 
 	return claims.UserID, nil
 }
+
+// resolveGithubToken returns the user's GitHub access token (decrypted).
+// Prefers DB token via user_id (set by JWT middleware). Falls back to
+// Authorization: Bearer or access_token form field for API clients.
+func ResolveGithubToken(c *gin.Context) (string, error) {
+	userIDVal, ok := c.Get("user_id")
+	if ok {
+		if userID, ok := userIDVal.(int64); ok {
+			dbUser, err := Queries.GetUserByID(c, userID)
+			if err == nil && dbUser.AccessToken != nil && *dbUser.AccessToken != "" {
+				dec, err := DecryptToken(*dbUser.AccessToken)
+				if err == nil && dec != "" {
+					return dec, nil
+				}
+			}
+		}
+	}
+
+	// Fallbacks for API clients
+	authHeader := c.GetHeader("Authorization")
+	if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+		return strings.TrimSpace(authHeader[len("Bearer "):]), nil
+	}
+	if t := c.PostForm("access_token"); t != "" {
+		return t, nil
+	}
+
+	return "", fmt.Errorf("github access token not found")
+}

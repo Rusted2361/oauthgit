@@ -32,8 +32,7 @@ func RegisterRoutes(router *gin.Engine) {
 	{
 		protected.GET("/welcome", handler.HandleWelcome)
 		protected.GET("/user", handler.UserData)
-		protected.POST("/CloneRepo", handler.HandleCloneRepo)
-		protected.POST("/staticAnalysis", handler.HandleStaticAnalysis)
+		protected.POST("/static-analysis", handler.HandleStaticAnalysis)
 		protected.GET("/user/followers", handler.UserFollowers)
 		protected.GET("/analysis", handler.HandleAnalysisPage)
 		protected.POST("/logout", handler.HandleLogout)
@@ -75,7 +74,7 @@ func main() {
 	//create Routers
 	router := gin.Default()
 
-	// Sessions Cookie
+	// Sessions
 	middlewares.InitSession(router, sessionKey)
 
 	//register routes

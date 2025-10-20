@@ -19,6 +19,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		source := "unknown"
 		if token, ok := session.Get("accesstoken").(string); ok && token != "" {
 			tokenString = token
+			source = "session"
 		} else {
 			authHeader := c.GetHeader("Authorization")
 			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {

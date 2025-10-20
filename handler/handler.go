@@ -191,7 +191,10 @@ func HandleCallback(c *gin.Context) {
 }
 
 func HandleWelcome(c *gin.Context) {
-	source := c.GetString("auth_source")
+	source, exists := c.Get("auth_source")
+	if !exists {
+		fmt.Println("empty autsource")
+	}
 	fmt.Println("auth source:", source)
 	fmt.Println("489")
 	userID, exists := c.Get("user_id")
@@ -253,54 +256,6 @@ func HandleLogout(c *gin.Context) {
 	fmt.Printf("Handling Logout")
 }
 
-func HandleCloneRepo(c *gin.Context) {
-	//this api will clone the repo and it will create a worker pool to get content of each file and send to llm to check if errors are handeld properly or not
-	fmt.Printf("229")
-	repoURL := ""
-	repoURL = c.PostForm("repo_url")
-	fmt.Printf("Repository URL: %s\n", repoURL)
-
-	if repoURL == "" {
-		repoURL = c.Request.URL.Query().Get("repo_url")
-		if repoURL == "" {
-			c.String(http.StatusBadRequest, "missing repo_url parameter")
-			return
-		}
-	}
-
-	fmt.Printf("238\n")
-	sess := sessions.Default(c)
-	accessToken, ok := sess.Get("accesstoken").(string)
-	if !ok || accessToken == "" {
-		// Fallback: allow Bearer token via Authorization header for API clients (e.g., Postman)
-		authHeader := c.GetHeader("Authorization")
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			accessToken = strings.TrimSpace(authHeader[len("Bearer "):])
-		}
-		// Optional: allow access_token form field as a secondary fallback
-		if accessToken == "" {
-			accessToken = c.PostForm("access_token")
-		}
-		if accessToken == "" {
-			c.String(http.StatusUnauthorized, "Access token not found")
-			return
-		}
-	}
-
-	//todo
-
-	fmt.Printf("245\n")
-	//todo: clone the repo
-	repoName := "test/" + strings.TrimSuffix(path.Base(repoURL), ".git")
-	err := helper.CloneRepo(repoURL, repoName, accessToken)
-	if err != nil {
-		fmt.Printf("Error cloning repo: %v\n", err)
-		http.Error(c.Writer, fmt.Sprintf("Failed to clone repository: %v", err), http.StatusInternalServerError)
-		return
-	}
-	c.String(http.StatusOK, "Repository cloned successfully")
-}
-
 func HandleAnalysisPage(c *gin.Context) {
 	// repo := c.Query("repo")
 	repo := c.Query("repo_url")
@@ -316,7 +271,7 @@ func HandleAnalysisPage(c *gin.Context) {
   <h1>Repository: %s</h1>
   <p>Choose what you want to do next:</p>
 
-  <form method="get" action="/static-analysis" style="margin-bottom: 1rem;">
+  <form method="post" action="/static-analysis" style="margin-bottom: 1rem;">
     <input type="hidden" name="repo" value="%s">
     <input type="hidden" name="action" value="static">
     <button type="submit">Run Static Analysis</button>
@@ -328,6 +283,7 @@ func HandleAnalysisPage(c *gin.Context) {
 }
 
 func HandleStaticAnalysis(c *gin.Context) {
+	fmt.Println("334")
 	repo := c.PostForm("repo")
 	if repo == "" {
 		repo = c.Request.URL.Query().Get("repo")
@@ -353,8 +309,15 @@ func HandleStaticAnalysis(c *gin.Context) {
 
 	// Check if directory exists
 	if _, err := os.Stat(absDir); err != nil {
-		c.String(http.StatusBadRequest, "repo directory not found: %s", absDir)
-		return
+		accessToken, err := helper.ResolveGithubToken(c)
+		if err != nil {
+			c.String(http.StatusUnauthorized, "Access token not found")
+			return
+		}
+		if err := helper.CloneRepo(repo, absDir, accessToken); err != nil {
+			c.String(http.StatusInternalServerError, "failed to clone repository: %v", err)
+			return
+		}
 	}
 
 	// Prepare command: cd into repo dir and run govulncheck
